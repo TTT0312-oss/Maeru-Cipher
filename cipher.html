@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>即席 暗号化／復号化（ひらがな→コード表）</title>
+<style>
+  :root { --bg:#0f1115; --fg:#e9edf1; --muted:#9aa3ad; --accent:#6aa1ff; }
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;}
+  header{padding:18px 22px;border-bottom:1px solid #1c2230;background:#0b0d12;}
+  h1{margin:0;font-size:18px;letter-spacing:.02em}
+  main{display:grid;gap:16px;padding:16px;max-width:980px;margin:auto;grid-template-columns:1fr;}
+  .panel{background:#121722;border:1px solid #1b2433;border-radius:12px;padding:14px;}
+  label{display:flex;align-items:center;gap:.6em;margin:0 0 8px;color:var(--muted);font-size:13px}
+  textarea{width:100%;min-height:140px;border:1px solid #2a3447;background:#0d1320;color:var(--fg);
+           border-radius:10px;padding:12px;font:15px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace;}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace}
+  .hint{color:var(--muted);font-size:13px}
+  .pill{display:inline-block;background:#101725;border:1px solid #22304a;color:#cfe0ff;border-radius:999px;padding:3px 8px;margin-right:6px}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:10px 0 20px}
+  kbd{background:#1a2231;border:1px solid #2a384f;border-radius:6px;padding:2px 6px}
+</style>
+</head>
+<body>
+  <header><h1>ひらがな⇄まえる暗号 即時暗号化／復号化</h1></header>
+  <main>
+    <section class="panel">
+      <label>プレーンテキスト（ひらがな・句読点など）</label>
+      <textarea id="plain" placeholder="ここに入力すると下が即時で暗号化されます。&#10;例）おはようのちゅー"></textarea>
+      <div class="hint">
+        変換規則：
+        <span class="pill">A=半濁点</span>
+        <span class="pill">B=濁点</span>
+        <span class="pill">C=小文字化</span>
+        <span class="pill">D=、</span>
+        <span class="pill">E=。</span>
+        <span class="pill">F=ー</span>
+        <span class="pill">G=！</span>
+        <span class="pill">H=？</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <label>暗号テキスト（コード列 / 空白区切り不要）</label>
+      <textarea id="cipher" placeholder="ここにコードを入力すると上が即時で復号されます。&#10;例）323821d22162621cCF（空白なしでOK）"></textarea>
+      <div class="hint mono">※ 数値は<strong>2桁単位</strong>で読み、直後の a〜h があれば前の2桁に付与。制御記号 A〜H は直前文字に適用。</div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <div class="hint">小ワザ: <kbd>Ctrl/Cmd + L</kbd> でプレーン→暗号、<kbd>Ctrl/Cmd + K</kbd> で暗号→プレーンを全選択コピー。</div>
+      </div>
+    </section>
+  </main>
+  <footer>表に基づくマッピングを内蔵。全てローカルで動作します。</footer>
+
+<script>
+/* === マッピング ========================= */
+const baseMap = {
+  "あ":"31","い":"21","う":"22","え":"23","お":"32",
+  "か":"33","き":"41","く":"11","け":"34","こ":"24",
+  "さ":"35","し":"12","す":"25","せ":"36","そ":"13",
+  "た":"42","ち":"26","つ":"14","て":"15","と":"27",
+  "な":"43","に":"37","ぬ":"28","ね":"29","の":"16",
+  "は":"38","ひ":"17","ふ":"44","へ":"18","ほ":"45",
+  "ま":"39","み":"21a","む":"31a","め":"21b","も":"31b",
+  "や":"31c","ゆ":"21c","よ":"21d",
+  "ら":"21e","り":"21f","る":"19","れ":"21g","ろ":"11a",
+  "わ":"21h","を":"31d","ん":"11b"
+};
+const CTRL = { HAND:"A", VOICE:"B", SMALL:"C", COMMA:"D", PERIOD:"E", LONG:"F", EXCL:"G", QUES:"H" };
+
+const reverseMap = {};
+for (const [k,v] of Object.entries(baseMap)) reverseMap[v] = k;
+
+/* === かな→コード（制御記号は後置） === */
+function kanaToCodeChar(ch){
+  if (ch==="、") return CTRL.COMMA;
+  if (ch==="。") return CTRL.PERIOD;
+  if (ch==="ー") return CTRL.LONG;
+  if (ch==="！"||ch==="!") return CTRL.EXCL;
+  if (ch==="？"||ch==="?") return CTRL.QUES;
+
+  const dak = {"が":"か","ぎ":"き","ぐ":"く","げ":"け","ご":"こ",
+               "ざ":"さ","じ":"し","ず":"す","ぜ":"せ","ぞ":"そ",
+               "だ":"た","ぢ":"ち","づ":"つ","で":"て","ど":"と",
+               "ば":"は","び":"ひ","ぶ":"ふ","べ":"へ","ぼ":"ほ"};
+  const han = {"ぱ":"は","ぴ":"ひ","ぷ":"ふ","ぺ":"へ","ぽ":"ほ"};
+
+  if (dak[ch]) return baseMap[dak[ch]] + CTRL.VOICE;
+  if (han[ch]) return baseMap[han[ch]] + CTRL.HAND;
+
+  const sm = {"ぁ":"あ","ぃ":"い","ぅ":"う","ぇ":"え","ぉ":"お",
+              "っ":"つ","ゃ":"や","ゅ":"ゆ","ょ":"よ","ゎ":"わ"};
+  if (sm[ch]) return baseMap[sm[ch]] + CTRL.SMALL;
+
+  if (baseMap[ch]) return baseMap[ch];
+  return ch;
+}
+
+/* === コード→かな === */
+function tokensToKana(tokens){
+  let out = "";
+  for (let i=0;i<tokens.length;i++){
+    let t = tokens[i];
+
+    // 単体制御記号（句読点・長音・記号）
+    if (t===CTRL.COMMA){ out+="、"; continue; }
+    if (t===CTRL.PERIOD){ out+="。"; continue; }
+    if (t===CTRL.LONG){ out+="ー"; continue; }
+    if (t===CTRL.EXCL){ out+="！"; continue; }
+    if (t===CTRL.QUES){ out+="？"; continue; }
+
+    // 通常トークン（2桁+任意の小英字1）
+    let kana = reverseMap[t];
+    if (!kana){ out += t; continue; }
+
+    const next = tokens[i+1];
+    if (next===CTRL.VOICE || next===CTRL.HAND || next===CTRL.SMALL){
+      if (next===CTRL.VOICE){
+        const vo={"か":"が","き":"ぎ","く":"ぐ","け":"げ","こ":"ご",
+                  "さ":"ざ","し":"じ","す":"ず","せ":"ぜ","そ":"ぞ",
+                  "た":"だ","ち":"ぢ","つ":"づ","て":"で","と":"ど",
+                  "は":"ば","ひ":"び","ふ":"ぶ","へ":"べ","ほ":"ぼ"};
+        kana = vo[kana] || (kana+"゛"); i++;
+      }else if(next===CTRL.HAND){
+        const ha={"は":"ぱ","ひ":"ぴ","ふ":"ぷ","へ":"ぺ","ほ":"ぽ"};
+        kana = ha[kana] || (kana+"゜"); i++;
+      }else if(next===CTRL.SMALL){
+        const sm={"あ":"ぁ","い":"ぃ","う":"ぅ","え":"ぇ","お":"ぉ",
+                  "つ":"っ","や":"ゃ","ゆ":"ゅ","よ":"ょ","わ":"ゎ"};
+        kana = sm[kana] || kana; i++;
+      }
+    }
+    out += kana;
+  }
+  return out;
+}
+
+/* === 改良トークナイザ（空白なし対応：2桁単位で切る） === */
+const tokenizeCipher = (s) => {
+  const tokens = [];
+  let i = 0;
+  while (i < s.length){
+    const ch = s[i];
+
+    // 制御記号 A〜H
+    if ("ABCDEFGH".includes(ch)){ tokens.push(ch); i++; continue; }
+
+    // 2桁数値 + 任意の小英字1
+    if (/[0-9]/.test(ch)){
+      // スキップされた空白を考慮しつつ2桁確保
+      let d1 = s[i], d2 = s[i+1];
+      if (!/[0-9]/.test(d2)){ // 数が1桁しかない異常系はそのまま出す
+        tokens.push(d1); i++; continue;
+      }
+      let token = d1 + d2;
+      i += 2;
+      // 直後に小英字があればサフィックスとして付与
+      if (i < s.length && /[a-z]/.test(s[i])){ token += s[i]; i++; }
+      tokens.push(token);
+      continue;
+    }
+
+    // 空白は無視
+    if (/\s/.test(ch)){ i++; continue; }
+
+    // それ以外は1文字として通す
+    tokens.push(ch); i++;
+  }
+  return tokens;
+};
+
+/* === 双方向の即時変換 === */
+const $plain = document.getElementById('plain');
+const $cipher = document.getElementById('cipher');
+let lock = false;
+
+// 暗号化は連結出力（空白なし）
+function encode(){
+  if (lock) return; lock = true;
+  let out = "";
+  for (const ch of $plain.value) out += kanaToCodeChar(ch);
+  $cipher.value = out;
+  lock = false;
+}
+function decode(){
+  if (lock) return; lock = true;
+  const tokens = tokenizeCipher($cipher.value);
+  $plain.value = tokensToKana(tokens);
+  lock = false;
+}
+
+$plain.addEventListener('input', encode);
+$cipher.addEventListener('input', decode);
+
+// 便利ショートカット
+document.addEventListener('keydown', (e)=>{
+  const isMeta = e.ctrlKey || e.metaKey;
+  if (isMeta && e.key.toLowerCase()==='l'){ e.preventDefault(); $cipher.focus(); $cipher.select(); document.execCommand('copy'); }
+  if (isMeta && e.key.toLowerCase()==='k'){ e.preventDefault(); $plain.focus(); $plain.select(); document.execCommand('copy'); }
+});
+</script>
+</body>
+</html>
